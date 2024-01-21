@@ -1,0 +1,688 @@
+//Purpose of code: This code is used to program a robot to complete certain objectives around a track.
+The 4 LEDs on the robot will flash for 5 seconds.
+// Next the robot will complete 2 laps around the outer-track. The robot will complete laps by
+following the line that make up the track.
+// This is done due to the robot utilizing the infra-red sensors that are situated on the front of
+the robot. Since the color of the line
+// is white, each of the 8 infra-red sensors will either return a '1'(black) or '0' (white). The value
+given by the 8 infra-red sensors is
+// denoted by an 8-bit binary number. The binary numbers are converted to integers and are
+then compared in an if statement. The comparison
+// is done in order to determine the angle (theta) that the robot has deviated away from the
+center of the line. The value of 'theta' will
+// be fed into a set of equations which represent the control law in the system. This is done to
+keep the robot in the center of the line.
+// Once the robot has completed 2 laps around the outer track, the robot will merge into the
+inner track, and once again complete two laps.
+// Next the robot will stop its motors for 5 seconds and then perform a 180-degree rotation and
+proceed to complete a single lap around the
+// inner track. Next the robot will transition to the outer track and proceed to follow the line
+until it detects the horizontal line (IR sensor reading: 00000000).
+// Once this happens, the motors will be switched off, and the 4 LED's will flash for 5 seconds to
+indicate the end of the program.
+// While the robot follows the white line, it will also be continuously detecting if there are any
+objects or vehicles infront.
+// The robot detects if there are any objects infront by utilizing the proximity sensors which are
+also situated on the front end of the robot.
+// If any objects/vehicles are detected, the robot will begin to slow down. If the robot is
+extremely close to the object infront, it will come to a complete stop.
+//Group: 35
+//Group members: Elion Selko, Zaid Daghash, Ahmed Nader
+#include <xc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#pragma config OSC = HS //High speed resonator
+#pragma config WDT = OFF //Watchdog timer off
+#pragma config LVP = OFF //Low voltage programming disabled
+#pragma config PWRT = ON //Power up timer on
+unsigned int readADC(void); //Read ADC
+unsigned int readADC1(void); //Read ADC
+#define _XTAL_FREQ 10000000 // define clock frequency for __delay_10ms()
+#define LED1 LATBbits.LATB2 //LED1
+#define LED2 LATBbits.LATB3 //LED2
+#define LED3 LATBbits.LATB4 //LED3
+#define LED4 LATBbits.LATB5 //LED4
+#define CCP2 LATCbits.LATC1 //CCP2
+#define CCP1 LATCbits.LATC2 //CCP1
+#define RC0 LATCbits.LATC0 //RC0
+#define RC5 LATCbits.LATC5 //RC5
+#define Leftmotor1A LATAbits.LA4 //Direction bits Left motor
+#define Leftmotor2A LATAbits.LA5
+#define Rightmotor3A LATBbits.LB0 //Direction bits Right motor
+#define Rightmotor4A LATBbits.LB1
+void configPWM(void); //Configure PWM
+void goforward(void); //Turn both motors forward
+unsigned int markspaceL; //Mark space ratio for Left motor
+unsigned int markspaceR; //Mark space ratio for Right motor
+void I2C_Initialise(void); //Initialise I2C
+void I2C_checkbus_free(void); //Wait until I2C bus is free
+void I2C_Start(void); //Generate I2C start condition
+void I2C_RepeatedStart(void); //Generate I2C Repeat start condition
+void I2C_Stop(void); //Generate I2C stop condition
+void I2C_Write(unsigned char write); //Generate I2C write condition
+unsigned char I2C_Read(void); //Generate I2C read condition
+void rotatespot(void); //Rotate on the spot
+void wait10ms(int del); //generates a delay in multiples of 10ms
+void wait100ms(int num); //generates a delay in multiples of 100ms
+void stop(int n); //stopping motors.
+void rotate(void); //rotating 180 degrees.
+void cycle0(int markspaceLeft, int markspaceRight,int gain); //completing laps around outer track
+void cycle231(int markspaceLeft, int markspaceRight, int gain); //completing laps around inner track
+void flashLED5s(void); //flashing LED's for 5 seconds
+void flashLED5sEND(void); //flashing LED's for 5 seconds at the end of the program
+void transition(void); //merging into the inner or outer track
+void main(void)
+{
+ int z=0; //Variable for use in a 'while' loop to program robot until it runs through the program
+ ADCON1=0b00001101; //Set voltage reference and port A0 as analogue input
+ ADCON2 = 0b10000010; // Fosc/32, A/D result right justified
+ TRISA = 0b11001111; //Set PORTA pins
+ TRISB = 0; //Set all PORTB pins to outputs
+ TRISC = 0b00111001; //Set PORTC pins
+
+ configPWM(); //Configure PWM
+ flashLED5s(); //Flashing LED's for 5 seconds.
+
+ while(z!=1)
+ {
+ //Calling functions in-order to complete laps around outer track
+ cycle0(500,500,20); //input parameters: left motor velocity, right motor velocity, gain
+ cycle231(500,500,20); //input parameters: left motor velocity, right motor velocity, gain
+ cycle0(500,500,20); //input parameters: left motor velocity, right motor velocity, gain
+
+ transition(); //Calling function to transition into inner track.
+
+ //Calling functions in-order to complete laps around inner track
+ cycle0(500,500,30); //input parameters: left motor velocity, right motor velocity, gain
+ cycle231(500,500,30); //input parameters: left motor velocity, right motor velocity, gain
+ cycle0(500,500,30); //input parameters: left motor velocity, right motor velocity, gain
+ stop(50); //Function for turning off motors for 5 seconds
+ rotate(); //Function for 180 degree rotation
+ //Calling functions in-order to complete a single lap around inner track
+ cycle0(500,500,30); //input parameters: left motor velocity, right motor velocity, gain
+ markspaceL=300; //left motor speed
+ markspaceR=300; //right motor speed
+ goforward(); // move forward
+
+ //Calling functions in-order to transition to outer-track
+ wait100ms(5); //Delay function
+ transition(); //transition to outer track
+
+ cycle0(500,500,20); //Following line until horizontal line detection, stop motors, flash LED's for 5
+seconds
+
+ z++;
+ }
+ flashLED5sEND(); //Flashing LED's at the end of the program
+}
+void I2C_Initialise(void) //Initialise I2C
+{
+ SSPCON1 = 0b00101000; //set to master mode, enable SDA and SCL pins
+ SSPCON2 = 0; //reset control register 2
+ SSPADD = 0x63; //set baud rate to 100KHz
+ SSPSTAT = 0; //reset status register
+}
+void I2C_checkbus_free(void) //Wait until I2C bus is free
+{
+ while ((SSPSTAT & 0x04) || (SSPCON2 & 0x1F)); //wait until I2C bus is free
+}
+void I2C_Start(void) //Generate I2C start condition
+{
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ SEN = 1; //Generate start condition,SSPCON2 bit 0 = 1
+}
+void I2C_RepeatedStart(void) //Generate I2C Repeat start condition
+{
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ RSEN = 1; //Generate repeat start, SSPCON2 bit1 = 1
+}
+void I2C_Stop(void) //Generate I2C stop condition
+{
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ PEN = 1; // Generate stop condition,SSPCON2 bit2 = 1
+}
+void I2C_Write(unsigned char write) //Write to slave
+{
+ I2C_checkbus_free(); //check I2C bus is free
+ SSPBUF = write; //Send data to transmit buffer
+}
+unsigned char I2C_Read(void) //Read from slave
+{
+ unsigned char temp;
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ RCEN = 1; //enable receiver,SSPCON2 bit3 = 1
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ temp = SSPBUF; //Read slave
+ I2C_checkbus_free(); //Test to see I2C bus is free
+ ACKEN = 1; //Acknowledge
+ return temp; //return sensor array data
+}
+void wait10ms(int del) //delay function)
+{
+ unsigned char c;
+ for(c=0;c<del;c++)
+ __delay_ms(10); //delaying by multiples of 10ms
+ return;
+}
+void wait100ms(int num) //delay function
+{
+ unsigned char d;
+ for(d=0;d<num;d++)
+ __delay_ms(100); //delaying by multiples of 100ms
+return;
+}
+void configPWM(void) //Configures PWM
+{
+PR2 = 0b11111111 ; //set period of PWM,610Hz
+T2CON = 0b00000111 ; //Timer 2(TMR2)on, prescaler = 16
+CCP1CON = 0b00001100; //enable CCP1 PWM
+CCP2CON = 0b00001100; //enable CCP2 PWM
+CCPR1L = 0; //turn left motor off
+CCPR2L = 0; //turn Right motor off
+return;
+}
+void goforward(void)
+{
+Leftmotor1A = 0; //Left motor forward;
+Leftmotor2A = 1;
+Rightmotor3A = 0; //Right motor forward;
+Rightmotor4A = 1;
+//0x0c enables PWM,then insert the 2 LSB of markspaceL into CCP1CON and the higher 8 bits into
+CCPR1L. Same as above but for CCP2CON and CCPR2L
+CCP1CON = (0x0c)|((markspaceL&0x03)<<4);
+CCPR1L = markspaceL>>2;
+CCP2CON = (0x0c)|((markspaceR&0x03)<<4);
+CCPR2L = markspaceR>>2;
+return;
+}
+void stop(int n) //Function for stopping motors
+{
+ Leftmotor1A=1;
+ Leftmotor2A=1;
+ Rightmotor3A=1;
+ Rightmotor4A=1;
+ CCP1=1;
+ CCP2=1;
+ wait100ms(n);
+}
+void transition(void) //Function for merging into the inner or outer track
+{
+ unsigned char linesensor; //Store raw data from sensor array
+ int sensor; //Variable for storing the binary IR sensor readings as an integer
+ int R=0, theta, e, K=20, u, v_l, v_r, lambda=1, HL; //Control law variables
+
+ ADCON1 = 0b00001101; //AN0,AN1 are analogue inputs,RA2 -RA5 are digital
+ TRISA = 0b11001111; //Set PORTA pins
+ TRISB = 0; //Set all PORTB pins to outputs
+ TRISC = 0b00111001; //Set PORTC pins
+
+ configPWM(); //Configure PWM
+ I2C_Initialise();
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to integer.
+ I2C_Stop();
+
+ while(sensor!=255)
+ {
+ markspaceL=100; //Left motor speed
+ markspaceR=400; //Right motor speed
+ goforward(); //move forward function
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to integer.
+ I2C_Stop();
+ }
+
+ markspaceL=300; //Left motor speed
+ markspaceR=300; //Right motor speed
+ goforward(); //move forward function
+ wait100ms(10); //delay for 1 second
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to integer.
+ I2C_Stop();
+
+ while(sensor > 249)
+ {
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to integer.
+ I2C_Stop();
+ markspaceL=250; //Left motor speed
+ markspaceR=350; //Right motor speed
+ goforward(); //move forward function
+ }
+}
+void rotate(void) //Function for rotating by 180 degrees.
+{
+ markspaceL=350; //left motor speed
+ markspaceR=350; //right motor speed
+ rotatespot(); //Function for rotating on the spot
+ wait100ms(15); //Delay for 1.5 seconds
+ unsigned char linesensor; //Store raw data from sensor array
+ int sensor; //Variable for converting sensor reading to int
+ int R=0, theta, e, K=20, u, v_l, v_r, lambda=1, HL; //Control law variables
+ ADCON1 = 0b00001101; //AN0,AN1 are analogue inputs,RA2 -RA5 are digital
+ TRISA = 0b11001111; //Set PORTA pins
+ TRISB = 0; //Set all PORTB pins to outputs
+ TRISC = 0b00111001; //Set PORTC pins
+ configPWM(); //Configure PWM
+ I2C_Initialise();
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Convert IR reading to an integer
+ I2C_Stop();
+ I2C_Initialise();
+ while(sensor > 249)
+ {
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to integer.
+ I2C_Stop(); //Send Stop condition
+ markspaceL=350; //Left motor speed
+ markspaceR=350; //Right motor speed
+ rotatespot(); //Function for rotating on the spot
+ }
+}
+void rotatespot(void) //Function for rotating on the spot
+{
+ CCP1CON = (0x0c)|((markspaceL&0x03)<<4);//0x0c enables PWM,then insert the 2 LSB
+ CCPR1L = markspaceL>>2; //of markspaceL into CCP1CON and the higher 8 bits into
+ CCP2CON = (0x0c)|((markspaceR&0x03)<<4); //CCPR1L. Same as above but for
+ CCPR2L = markspaceR>>2;
+ Leftmotor1A=0;
+ Leftmotor2A=1;
+ Rightmotor3A=1;
+ Rightmotor4A=0;
+ return;
+}
+void cycle0(int markspaceLeft, int markspaceRight, int gain) //Function for completing laps around outer
+track
+{
+ unsigned char linesensor; //Store raw data from sensor array
+ int sensor;
+ int R=0, theta, e, K=gain, u, v_l, v_r, lambda = 1,sensorL,sensorR; //Control law variables and IR
+sensor's value
+ I2C_Initialise();
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Convert sensor reading to integer
+ I2C_Stop();
+
+ while(sensor!=0)
+ {
+ int markspace=0;
+ markspaceL=markspaceLeft; //Left motor speed
+ markspaceR=markspaceRight; //Right motor speed
+ sensorL=readADC(); // Read the 10 bit left sensor and store the value as an integer in sensorL
+variable
+ sensorR=readADC1(); // Read the 10 bit right sensor and store the value as an integer in
+sensorR variable
+ // This value will be within the range 0-1023
+ if(sensorL>=0 && sensorL <=1024){ // If the value of sensorL is within the defined range
+ markspaceL=markspaceLeft-sensorL;
+ // Subtract the sensor value from the markspace
+ // The closer the obstacle is, the larger the sensor value
+ // which is subtracted from markspaceL and slower the speed
+ if(markspaceL<0){ //In case the markspaceL from the subtraction becomes negative
+ markspaceL=0; // change the speed value to 0
+ }
+ markspaceR=markspaceL; //Match the speed of the wheels
+ }
+
+ if(sensorR >=0 && sensorR <=1024){ // If the value of sensorR is within the defined range
+ markspaceR=markspaceRight-sensorR;
+ // Subtract the sensor value from the markspace
+ // The closer the obstacle is, the larger the sensor value
+ // which is subtracted from markspaceL and slower the speed
+ if(markspaceR<0){ //In case the markspaceL from the subtraction becomes negative
+ markspaceR=0; // change the speed value to 0
+ }
+ markspaceL=markspaceR; //Match the speed of the wheels
+ }
+
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Convert sensor reading to integer
+ I2C_Stop(); //Send Stop condition
+ configPWM(); //Config PWM
+
+ //'if' statement for comparing IR sensor readings and determining the angle of deviation from
+center of the line
+ if (sensor==254)
+ {
+ theta=-12;
+ }
+ else if (sensor==252)
+ {
+ theta=-10;
+ }
+ else if (sensor==253)
+ {
+ theta=-9;
+ }
+ else if (sensor==249)
+ {
+ theta=-7;
+ }
+ else if (sensor==251)
+ {
+ theta=-5;
+ }
+ else if (sensor==243)
+ {
+ theta=-3;
+ }
+ else if (sensor==247)
+ {
+ theta=-2;
+ }
+ else if (sensor==231)
+ {
+ goforward();
+ }
+ else if (sensor==239)
+ {
+ theta=2;
+ }
+ else if (sensor==207)
+ {
+ theta=3;
+ }
+ else if (sensor==223)
+ {
+ theta=5;
+ }
+ else if (sensor==159)
+ {
+ theta=7;
+ }
+ else if (sensor==191)
+ {
+ theta=9;
+ }
+ else if (sensor==63)
+ {
+ theta=10;
+ }
+ else if (sensor==127)
+ {
+ theta=12;
+ }
+ else
+ {
+ goforward();
+ }
+ //Control law equations
+ e=-theta; //error equation
+ u=e*K; //input equation
+ markspaceL=markspaceL-lambda*u; //Velocity of left motor equation
+ markspaceR=markspaceR+lambda*u; //Velocity of right motor equation
+
+ //'if' statement to make sure both motor values don't exceed the boundaries.
+ //This is done due to the motors being able to withstand a maximum speed of 1023 and a minimum
+of 0
+ if(markspaceL>1023)
+ {
+ markspaceL=1023;
+ }
+ else if(markspaceL<0)
+ {
+ markspaceL=0;
+ }
+ if(markspaceR>1023)
+ {
+ markspaceR=1023;
+ }
+ else if(markspaceR<0)
+ {
+ markspaceR=0;
+ }
+ goforward(); //Move forward
+ }
+ I2C_Stop();
+}
+void cycle231(int markspaceLeft, int markspaceRight,int gain) //Function for completing laps around
+inner track
+{
+ unsigned char linesensor; //Store raw data from sensor array
+ int sensor; //Variable for storing the IR sensor reading as an integer
+ int R=0, theta, e, K=gain, u, v_l, v_r, lambda=1, sensorL,sensorR;; //Control law variables and IR
+sensor's value
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to an integer
+ I2C_Stop();
+ while(sensor!=231)
+ {
+ int markspace=0;
+ markspaceL=markspaceLeft; //Left motor speed
+ markspaceR=markspaceRight; //Right motor speed
+ sensorL=readADC(); // Read the 10 bit left sensor and store the value as an integer in sensorL
+variable
+ sensorR=readADC1(); // Read the 10 bit right sensor and store the value as an integer in
+sensorR variable
+ // This value will be within the range 0-1023
+ if(sensorL>=0 && sensorL <=1024){ // If the value of sensorL is within the defined range
+ markspaceL=markspaceLeft-sensorL;
+ // Subtract the sensor value from the markspace
+ // The closer the obstacle is, the larger the sensor value
+ // which is subtracted from markspaceL and slower the speed
+ if(markspaceL<0){ //In case the markspaceL from the subtraction becomes negative
+ markspaceL=0; // change the speed value to 0
+ }
+ markspaceR=markspaceL; //Match the speed of the wheels
+ }
+
+ if(sensorR >=0 && sensorR <=1024){ // If the value of sensorR is within the defined range
+ markspaceR=markspaceRight-sensorR;
+ // Subtract the sensor value from the markspace
+ // The closer the obstacle is, the larger the sensor value
+ // which is subtracted from markspaceL and slower the speed
+ if(markspaceR<0){ //In case the markspaceL from the subtraction becomes negative
+ markspaceR=0; // change the speed value to 0
+ }
+ markspaceL=markspaceR; //Match the speed of the wheels
+ }
+ I2C_Start(); //Send Start condition to slave
+ I2C_Write(0x7C); //Send 7 bit address + Write to slave
+ I2C_Write(0x11); //Write data, select RegdataA and send to slave
+ I2C_RepeatedStart(); //Send repeat start condition
+ I2C_Write(0x7D); //Send 7 bit address + Read
+ linesensor=I2C_Read(); //Read the IR sensors
+ sensor=linesensor; //Converting IR sensor reading to an integer
+ I2C_Stop(); //Send Stop condition
+ configPWM(); //Configure PWM
+ //'if' statement for comparing IR sensor readings and determining the angle of deviation from
+center of the line
+ if (sensor==254)
+ {
+ theta=-12;
+ }
+ else if (sensor==252)
+ {
+ theta=-10;
+ }
+ else if (sensor==253)
+ {
+ theta=-9;
+ }
+ else if (sensor==249)
+ {
+ theta=-7;
+ }
+ else if (sensor==251)
+ {
+ theta=-5;
+ }
+ else if (sensor==243)
+ {
+ theta=-3;
+ }
+ else if (sensor==247)
+ {
+ theta=-2;
+ }
+ else if (sensor==0)
+ {
+ goforward();
+ }
+ else if (sensor==239)
+ {
+ theta=2;
+ }
+ else if (sensor==207)
+ {
+ theta=3;
+ }
+ else if (sensor==223)
+ {
+ theta=5;
+ }
+ else if (sensor==159)
+ {
+ theta=7;
+ }
+ else if (sensor==191)
+ {
+ theta=9;
+ }
+ else if (sensor==63)
+ {
+ theta=10;
+ }
+ else if (sensor==127)
+ {
+ theta=12;
+ }
+ else
+ {
+ goforward();
+ }
+ //Control law equations
+ e=-theta; //Error equations
+ u=e*K; //Input equation
+ markspaceL=markspaceL-lambda*u; //Left motor velocity equation
+ markspaceR=markspaceR+lambda*u; //Right motor velocity equation
+
+ //'if' statement to make sure both motor values don't exceed the boundaries.
+ //This is done due to the motors being able to withstand a maximum speed of 1023 and a minimum
+of 0
+ if(markspaceL>1023)
+ {
+ markspaceL=1023;
+ }
+ else if(markspaceL<0)
+ {
+ markspaceL=0;
+ }
+ if(markspaceR>1023)
+ {
+ markspaceR=1023;
+ }
+ else if(markspaceR<0)
+ {
+ markspaceR=0;
+ }
+ goforward(); //Move forward
+
+ }
+
+ I2C_Stop();
+}
+void flashLED5s(void) //Function for flashing the LED's for 5 seconds
+{
+ TRISB = 0;
+ LATB=0;
+ for (int i=0;i<5;i++)
+ {
+ LED1=1; //turn LED1 on
+ LED2=1; //turn LED2 on
+ LED3=1; //turn LED3 on
+ LED4=1; //turn LED4 on
+ wait10ms(50); //wait 1 second
+ LED1=0; //turn LED1 off
+ LED2=0; //turn LED2 off
+ LED3=0; //turn LED3 off
+ LED4=0; //turn LED4 off
+ wait10ms(50);//wait 1 second
+ }
+}
+void flashLED5sEND(void) //Function for flashing the LED's at the end of the main objective
+{
+ LATB=0;
+
+ for(int i=0;i<5;i++)
+ {
+ Leftmotor1A=1;
+ Leftmotor2A=1;
+ Rightmotor3A=1;
+ Rightmotor4A=1;
+ CCP1=1;
+ CCP2=1;
+ LED1=1; //turn LED1 on
+ LED2=1; //turn LED2 on
+ LED3=1; //turn LED3 on
+ LED4=1; //turn LED4 on
+ wait100ms(5); //wait 0.5 seconds
+ Leftmotor1A=1;
+ Leftmotor2A=1;
+ Rightmotor3A=1;
+ Rightmotor4A=1;
+ CCP1=1;
+ CCP2=1;
+ LED1=0; //turn LED1 off
+ LED2=0; //turn LED2 off
+ LED3=0; //turn LED3 off
+ LED4=0; //turn LED 4 off
+ wait100ms(5); //wait 0.5 seconds
+ }
+ stop(3000); //Stop motors
+}
+unsigned int readADC(void) {
+ ADCON0 = 0b00000011; //select A/D channel AN0,start conversion
+ while (ADCON0bits.GO); //do nothing while conversion in progress
+ return ((ADRESH << 8) + ADRESL); //Combines high and low A/D bytes into one
+} // value and returns Result (A/D value 0-1023)
+unsigned int readADC1(void) {
+ ADCON0 = 0b00000111; //select A/D channel AN0,start conversion
+ while (ADCON0bits.GO); //do nothing while conversion in progress
+ return ((ADRESH << 8) + ADRESL); //Combines high and low A/D bytes into one
+}
