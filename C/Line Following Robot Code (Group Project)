@@ -28,6 +28,7 @@ also situated on the front end of the robot.
 extremely close to the object infront, it will come to a complete stop.
 //Group: 35
 //Group members: Elion Selko, Zaid Daghash, Ahmed Nader
+
 #include <xc.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +72,7 @@ void cycle231(int markspaceLeft, int markspaceRight, int gain); //completing lap
 void flashLED5s(void); //flashing LED's for 5 seconds
 void flashLED5sEND(void); //flashing LED's for 5 seconds at the end of the program
 void transition(void); //merging into the inner or outer track
+
 void main(void)
 {
  int z=0; //Variable for use in a 'while' loop to program robot until it runs through the program
